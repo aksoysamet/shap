@@ -8,7 +8,7 @@ from ..utils import MaskedModel, partition_tree_shuffle
 from ._explainer import Explainer
 
 
-class Permutation(Explainer):
+class PermutationExplainer(Explainer):
     """ This method approximates the Shapley values by iterating through permutations of the inputs.
 
     This is a model agnostic explainer that guarantees local accuracy (additivity) by iterating completely
@@ -47,6 +47,9 @@ class Permutation(Explainer):
         # setting seed for random generation: if seed is not None, then shap values computation should be reproducible
         np.random.seed(seed)
 
+        if masker is None:
+            raise ValueError("masker cannot be None.")
+
         super().__init__(model, masker, link=link, linearize_link=linearize_link, feature_names=feature_names)
 
         if not isinstance(self.model, Model):
@@ -56,15 +59,15 @@ class Permutation(Explainer):
         # has a call function with those new default arguments
         if len(call_args) > 0:
             # this signature should match the __call__ signature of the class defined below
-            class Permutation(self.__class__):
+            class PermutationExplainer(self.__class__):
                 def __call__(self, *args, max_evals=500, main_effects=False, error_bounds=False, batch_size="auto",
                              outputs=None, silent=False):
                     return super().__call__(
                         *args, max_evals=max_evals, main_effects=main_effects, error_bounds=error_bounds,
                         batch_size=batch_size, outputs=outputs, silent=silent
                     )
-            Permutation.__call__.__doc__ = self.__class__.__call__.__doc__
-            self.__class__ = Permutation
+            PermutationExplainer.__call__.__doc__ = self.__class__.__call__.__doc__
+            self.__class__ = PermutationExplainer
             for k, v in call_args.items():
                 self.__call__.__kwdefaults__[k] = v
 
@@ -211,4 +214,4 @@ class Permutation(Explainer):
         return explanation.values
 
     def __str__(self):
-        return "shap.explainers.Permutation()"
+        return "shap.explainers.PermutationExplainer()"

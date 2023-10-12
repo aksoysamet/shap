@@ -1,4 +1,5 @@
 import json
+import os
 import struct
 import time
 import warnings
@@ -46,7 +47,7 @@ feature_perturbation_codes = {
 }
 
 
-class Tree(Explainer):
+class TreeExplainer(Explainer):
     """ Uses Tree SHAP algorithms to explain the output of ensemble tree models.
 
     Tree SHAP is a fast and exact method to estimate SHAP values for tree models and ensembles of trees,
@@ -1129,7 +1130,25 @@ class TreeEnsemble:
             self.internal_dtype = shap_trees[0].tree_.value.dtype.type
             self.input_dtype = np.float32
             scaling = - model.learning_rate * np.array(model.scalings) # output is weighted average of trees
-            self.trees = [SingleTree(e.tree_, scaling=s, data=data, data_missing=data_missing) for e,s in zip(shap_trees,scaling)]
+            # ngboost reorders the features, so we need to map them back to the original order
+            missing_col_idxs = [[i for i in range(model.n_features) if i not in col_idx] for col_idx in model.col_idxs]
+            feature_mapping = [{i: col_idx for i, col_idx in enumerate(list(col_idxs) + missing_col_idx)}
+                               for col_idxs, missing_col_idx in zip(model.col_idxs, missing_col_idxs)]
+            self.trees = []
+            for idx, shap_tree in enumerate(shap_trees):
+                tree_ = shap_tree.tree_
+                values = tree_.value.reshape(tree_.value.shape[0], tree_.value.shape[1] * tree_.value.shape[2])
+                values = values * scaling[idx]
+                tree = {
+                    "children_left": tree_.children_left.astype(np.int32),
+                    "children_right": tree_.children_right.astype(np.int32),
+                    "children_default": tree_.children_left,
+                    "features": np.array([feature_mapping[idx].get(i, i) for i in tree_.feature]),
+                    "thresholds": tree_.threshold.astype(np.float64),
+                    "values": values,
+                    "node_sample_weight": tree_.weighted_n_node_samples.astype(np.float64)
+                }
+                self.trees.append(SingleTree(tree, data=data, data_missing=data_missing))
             self.objective = objective_name_map.get(shap_trees[0].criterion, None)
             self.tree_output = "raw_value"
             self.base_offset = model.init_params[param_idx]
@@ -1830,13 +1849,11 @@ class XGBTreeModelLoader:
 
 class CatBoostTreeModelLoader:
     def __init__(self, cb_model):
-        # cb_model.save_model("cb_model.json", format="json")
-        # self.loaded_cb_model = json.load(open("cb_model.json", "r"))
         import tempfile
-        tmp_file = tempfile.NamedTemporaryFile()
-        cb_model.save_model(tmp_file.name, format="json")
-        self.loaded_cb_model = json.load(open(tmp_file.name))
-        tmp_file.close()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_file = os.path.join(tmp_dir, "model.json")
+            cb_model.save_model(tmp_file, format="json")
+            self.loaded_cb_model = json.load(open(tmp_file))
 
         # load the CatBoost oblivious trees specific parameters
         self.num_trees = len(self.loaded_cb_model['oblivious_trees'])
